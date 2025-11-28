@@ -27,7 +27,7 @@ class Settings:
 
 		return settings
 
-	func save_settings(file_path: String) -> void:
+	func save_settings(file_path: String) -> Error:
 		var config = ConfigFile.new()
 
 		for property_dictionary in self.get_property_list():
@@ -46,38 +46,41 @@ func recursive_iterate(node: Node, include_parent: bool = false) -> Array[Node]:
 	if include_parent:
 		return_nodes.append(node)
 
-	var recursive_iterate_func := func _recursive_iterate(parent_node: Node, function: Callable):
-		return_nodes.append(parent_node)
-		for child_node in parent_node.get_children():
-			function.call(child_node, function)
-
 	for child_node in node.get_children():
-		recursive_iterate_func.call(child_node, recursive_iterate_func)
+		return_nodes.append_array(recursive_iterate(child_node, true))
 
 	return return_nodes
 
-func _cleanup():
-	if tool_popup_menu != null:
-		if tool_popup_menu.id_pressed.is_connected(_popup_item_selected):
-			tool_popup_menu.id_pressed.disconnect(_popup_item_selected)
-		tool_popup_menu.queue_free()
-	tool_popup_menu = null
-
-func _handle_swap():
-	# TODO: Store previous if first so we can swap back on disable.
+func handle_swap():
 	var play_main_button_node: BaseButton = null
 	var play_current_button_node: BaseButton = null
-	for node in recursive_iterate(EditorInterface.get_base_control()):
-		if node is BaseButton and node.theme_type_variation == "RunBarButton":
-			var pressed_connection_list = node.get_signal_connection_list("pressed")
-			for connection_dict in pressed_connection_list:
-				var callable_string = str(connection_dict.get("callable", null))
-				if callable_string.contains("play_main"):
+
+	var current_engine_version = Engine.get_version_info()
+
+	var editor_control_nodes: Array[Node] = recursive_iterate(self.get_editor_interface().get_base_control())
+
+	if current_engine_version["major"] == 4 and current_engine_version["minor"] >= 5:
+		for node in editor_control_nodes:
+			if node is BaseButton and node.theme_type_variation == "RunBarButton":
+				var pressed_connection_list = node.get_signal_connection_list("pressed")
+				for connection_dict in pressed_connection_list:
+					var callable_string = str(connection_dict.get("callable", null))
+					if callable_string.contains("play_main"):
+						play_main_button_node = node
+						break
+					elif callable_string.contains("play_current"):
+						play_current_button_node = node
+						break
+	else:
+		# TODO: Only works for English language. Could check icon, control index (which would need to factor in Mono support), keybind.
+		for node in editor_control_nodes:
+			if node is BaseButton:
+				var node_tooltip_text_lower = node.tooltip_text.to_lower()
+
+				if "play the project" in node_tooltip_text_lower:
 					play_main_button_node = node
-					break
-				elif callable_string.contains("play_current"):
+				elif "play the edited scene" in node_tooltip_text_lower:
 					play_current_button_node = node
-					break
 
 	if play_main_button_node != null and play_current_button_node != null:
 		previous_index = play_main_button_node.get_index()
@@ -96,15 +99,33 @@ func _popup_item_selected(id: int) -> void:
 			var settings = Settings.read_from_file(get_settings_file_path())
 			if settings == null:
 				settings = Settings.new()
-				settings.s_enabled = false;
+				settings.s_enabled = false
 			else:
 				settings.s_enabled = !settings.s_enabled
 
 			settings.save_settings(get_settings_file_path())
 
-			_handle_swap()
+			handle_swap()
 		_:
 			push_error("Unrecognized item text '" + str(item_text) + "'.")
+
+func _cleanup():
+	var settings = Settings.read_from_file(get_settings_file_path())
+	if settings == null:
+		settings = Settings.new()
+		settings.s_enabled = false
+
+	if settings.s_enabled:
+		handle_swap()
+
+	if tool_popup_menu != null:
+		if tool_popup_menu.id_pressed.is_connected(_popup_item_selected):
+			tool_popup_menu.id_pressed.disconnect(_popup_item_selected)
+
+		# Will free the node automatically.
+		remove_tool_menu_item(TOOL_MENU_NAME)
+
+	tool_popup_menu = null
 
 func _enter_tree() -> void:
 	tool_popup_menu = PopupMenu.new()
@@ -118,10 +139,10 @@ func _enter_tree() -> void:
 	var settings = Settings.read_from_file(get_settings_file_path())
 	if settings == null:
 		settings = Settings.new()
-		settings.s_enabled = false;
+		settings.s_enabled = false
 
 	if settings.s_enabled:
-		_handle_swap()
+		handle_swap()
 
 func _exit_tree() -> void:
 	_cleanup()
