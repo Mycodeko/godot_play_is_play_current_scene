@@ -1,0 +1,3 @@
+[submodule "GodotPluginTools"]
+	path = GodotPluginTools
+	url = https://github.com/Mycodeko/GodotPluginTools.git
